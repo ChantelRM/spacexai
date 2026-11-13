@@ -5,6 +5,7 @@ drf-spectacular==0.30.0
 django-cors-headers==4.9.0
 django-environ==0.14.0
 openai==3.50.0
+Pillow==13.0.0
 
 # Testing
 pytest==9.2.0
