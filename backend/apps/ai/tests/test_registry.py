@@ -89,7 +89,7 @@ def test_invalid_arguments_are_rejected_and_logged(farmer, arguments, field):
 
 def test_invalid_listing_arguments(farmer):
     outcome = execute_tool_call(farmer, "create_or_update_listing", json.dumps(
-        {"produce": "potatoes", "quantity": 0, "unit": "sacks", "price_per_unit": 8}))
+        {"produce": "potatoes", "quantity": 0, "unit": "SACKS", "price_per_unit": 8}))
     assert outcome.status == "invalid"
     assert {"quantity", "unit"} <= set(outcome.result["details"])
     assert PendingAction.objects.count() == 0
@@ -163,7 +163,7 @@ def test_stub_tools_report_not_available(farmer, name, args):
 
 def test_buyer_stub_reports_not_available(buyer):
     outcome = execute_tool_call(buyer, "search_recommended_farmers",
-                                json.dumps({"produce": "potatoes", "quantity": 500, "unit": "kg"}))
+                                json.dumps({"produce": "potatoes", "quantity": 500, "unit": "KG"}))
     assert outcome.result == NOT_AVAILABLE
 
 

@@ -168,6 +168,7 @@ class ToolOutcome:
     result: dict  # what Grok sees (already scrubbed)
     pending_action: PendingAction | None = None
     data: dict | None = field(default=None)  # what the app may render (successful results only)
+    error: Exception | None = None  # the service's own APIException, re-raised by the confirm endpoint
 
 
 def _json_safe(value):
@@ -284,25 +285,45 @@ def _run(spec, user, data, log_args, conversation, success_status) -> ToolOutcom
     S = AIActionLog.Status
     try:
         raw_result = spec.func(user, data)
-    except (DjangoPermissionDenied, drf_exceptions.PermissionDenied):
-        _log(user, conversation, spec.name, log_args, S.DENIED, "Permission denied by service", spec.requires_confirmation)
-        return ToolOutcome(spec.name, S.DENIED, {"error": "permission_denied", "message": "The user is not allowed to do that."})
-    except drf_exceptions.ValidationError as exc:
-        errors = _json_safe(exc.detail)
-        _log(user, conversation, spec.name, log_args, S.INVALID, json.dumps(errors)[:1000], spec.requires_confirmation)
-        return ToolOutcome(spec.name, S.INVALID, {"error": "invalid_arguments", "details": errors})
+    except DjangoPermissionDenied:
+        return _client_error(spec, user, conversation, log_args, drf_exceptions.PermissionDenied())
+    except drf_exceptions.APIException as exc:
+        if exc.status_code < 500:
+            return _client_error(spec, user, conversation, log_args, exc)
+        return _server_error(spec, user, conversation, log_args)
     except Exception:  # noqa: BLE001
-        logger.exception("AI tool %s failed", spec.name)
-        _log(user, conversation, spec.name, log_args, S.ERROR, "Tool raised an exception", spec.requires_confirmation)
-        return ToolOutcome(spec.name, S.ERROR, {
-            "error": "tool_failed",
-            "message": "This tool failed unexpectedly. Tell the user something went wrong and to try again later.",
-        })
+        return _server_error(spec, user, conversation, log_args)
 
     result = _json_safe(scrub_private_fields(raw_result if isinstance(raw_result, dict) else {"result": raw_result}))
     _log(user, conversation, spec.name, log_args, success_status, summarize_result(result),
          spec.requires_confirmation, executed=True)
     return ToolOutcome(spec.name, success_status, result, data=result)
+
+
+def _client_error(spec, user, conversation, log_args, exc) -> ToolOutcome:
+    """A service refused the request (permission, not found, validation, conflict)."""
+    S = AIActionLog.Status
+    status = S.DENIED if isinstance(exc, drf_exceptions.PermissionDenied) else S.INVALID
+    detail = _json_safe(exc.detail)
+    message = detail if isinstance(detail, str) else (
+        "Some of the details are not valid." if isinstance(exc, drf_exceptions.ValidationError) else str(exc.detail)
+    )
+    result = {"error": exc.default_code if status == S.INVALID else "permission_denied", "message": message}
+    if isinstance(exc, drf_exceptions.ValidationError):
+        result["error"] = "invalid_arguments"
+        result["details"] = detail if isinstance(detail, dict) else {"non_field_errors": detail}
+    _log(user, conversation, spec.name, log_args, status, json.dumps(result)[:1000], spec.requires_confirmation)
+    return ToolOutcome(spec.name, status, result, error=exc)
+
+
+def _server_error(spec, user, conversation, log_args) -> ToolOutcome:
+    logger.exception("AI tool %s failed", spec.name)
+    _log(user, conversation, spec.name, log_args, AIActionLog.Status.ERROR, "Tool raised an exception",
+         spec.requires_confirmation)
+    return ToolOutcome(spec.name, AIActionLog.Status.ERROR, {
+        "error": "tool_failed",
+        "message": "This tool failed unexpectedly. Tell the user something went wrong and to try again later.",
+    })
 
 
 # --- Confirmation flow (called from the API only; Grok has no path here) -----------
@@ -362,10 +383,8 @@ def confirm_pending_action(user, action_id) -> dict:
                    success_status=AIActionLog.Status.CONFIRMED)
     if outcome.status != AIActionLog.Status.CONFIRMED:
         PendingAction.objects.filter(pk=action.pk).update(status=P.FAILED, result=outcome.result)
-        if outcome.status == AIActionLog.Status.DENIED:
-            raise drf_exceptions.PermissionDenied(outcome.result.get("message"))
-        if outcome.status == AIActionLog.Status.INVALID:
-            raise drf_exceptions.ValidationError(outcome.result.get("details"))
+        if outcome.error is not None:
+            raise outcome.error
         raise drf_exceptions.APIException("The action failed. Nothing was saved. Please try again later.")
 
     now = timezone.now()

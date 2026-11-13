@@ -36,7 +36,7 @@ SERVICE_PROVIDERS: dict[str, str] = {
     "search_recommended_farmers": "apps.buyers.ai_services.search_recommended_farmers",
     # Member 2 (farmer profiles, produce listings)
     "search_buyer_requirements": "apps.listings.ai_services.search_buyer_requirements",
-    "create_or_update_listing": "apps.listings.ai_services.create_or_update_listing",
+    "create_or_update_listing": "apps.listings.services.create_or_update_listing",
     # Member 4 (cooperation: groups, bulk buying, transport, equipment)
     "find_bulk_purchases": "apps.cooperation.ai_services.find_bulk_purchases",
     "calculate_cost_shares": "apps.cooperation.ai_services.calculate_cost_shares",

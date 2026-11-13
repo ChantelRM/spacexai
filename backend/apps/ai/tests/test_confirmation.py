@@ -14,7 +14,7 @@ from .helpers import text_turn, tool_turn
 pytestmark = pytest.mark.django_db
 
 CHAT = reverse("ai:chat")
-LISTING_ARGS = {"produce": "potatoes", "quantity": 500, "unit": "kg", "price_per_unit": 8,
+LISTING_ARGS = {"produce": "potatoes", "quantity": 500, "unit": "KG", "price_per_unit": 8,
                 "available_from": "2026-11-20"}
 
 
@@ -154,8 +154,8 @@ def test_unknown_action_id_is_404(farmer_client):
     assert farmer_client.post(confirm_url("00000000-0000-0000-0000-000000000000")).status_code == 404
 
 
-def test_no_pending_action_when_service_not_built_yet(farmer_client, fake_grok):
-    # Default providers: the listings module does not exist yet.
+def test_no_pending_action_when_service_not_built_yet(farmer_client, fake_grok, settings):
+    settings.AI_SERVICE_PROVIDERS = {"create_or_update_listing": "apps.not_built_yet.services.create_or_update_listing"}
     fake_grok(tool_turn("create_or_update_listing", **LISTING_ARGS), text_turn("Listings aren't available yet."))
     body = farmer_client.post(CHAT, {"message": "list potatoes"}, format="json").json()
     assert body["pending_action"] is None
@@ -165,7 +165,7 @@ def test_no_pending_action_when_service_not_built_yet(farmer_client, fake_grok):
 
 
 def test_update_summary_mentions_listing_id(farmer_client, listing_service, fake_grok):
-    fake_grok(tool_turn("create_or_update_listing", listing_id=7, produce="onions", quantity=12.5, unit="bag",
+    fake_grok(tool_turn("create_or_update_listing", listing_id=7, produce="onions", quantity=12.5, unit="BAG",
                         price_per_unit=1250, available_until="2026-12-01"),
               text_turn("Please confirm."))
     body = farmer_client.post(CHAT, {"message": "update listing 7"}, format="json").json()

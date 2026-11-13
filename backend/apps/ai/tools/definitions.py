@@ -8,13 +8,16 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from apps.accounts.models import Role
+from apps.listings.models import QualityGrade
+from apps.listings.units import Unit, format_quantity
 
 from .registry import call_service, register_tool
 
 FARMER = Role.FARMER
 BUYER = Role.WHOLESALE_BUYER
 
-UNIT_CHOICES = ["kg", "tonne", "g", "crate", "bag", "box", "bunch", "head", "dozen", "tray", "litre", "unit"]
+UNIT_CHOICES = Unit.values  # KG, TONNE, BAG, CRATE, BOX, DOZEN, LITRE, UNIT
+CATEGORY_SLUGS = ["vegetables", "fruits", "grains", "legumes", "livestock-products", "dairy", "herbs", "other"]
 
 
 def max_distance_field():
@@ -32,11 +35,6 @@ def limit_field():
 def produce_field(required=True):
     return serializers.CharField(required=required, max_length=80, min_length=2,
                                  help_text="Produce name, e.g. 'potatoes', 'butternut', 'spinach'.")
-
-
-def _fmt_qty(value: Decimal) -> str:
-    text = format(value.normalize(), "f")
-    return text
 
 
 def _fmt_money(value: Decimal) -> str:
@@ -77,8 +75,10 @@ class CreateOrUpdateListingInput(serializers.Serializer):
     quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"),
                                         max_value=Decimal("1000000"))
     unit = serializers.ChoiceField(choices=UNIT_CHOICES)
-    price_per_unit = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal("0.01"),
+    price_per_unit = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"),
                                               help_text="Price in South African rand (ZAR) per unit.")
+    category = serializers.ChoiceField(choices=CATEGORY_SLUGS, required=False)
+    quality_grade = serializers.ChoiceField(choices=QualityGrade.values, required=False)
     available_from = serializers.DateField(required=False)
     available_until = serializers.DateField(required=False)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
@@ -92,8 +92,11 @@ class CreateOrUpdateListingInput(serializers.Serializer):
 
 def summarize_listing(data) -> str:
     verb = f"Update listing #{data['listing_id']}" if data.get("listing_id") else "Create a listing"
-    text = (f"{verb}: {_fmt_qty(data['quantity'])} {data['unit']} {data['produce']} "
-            f"at {_fmt_money(data['price_per_unit'])}/{data['unit']}")
+    unit_label = Unit(data["unit"]).label
+    text = (f"{verb}: {format_quantity(data['quantity'], data['unit'])} {data['produce']} "
+            f"at {_fmt_money(data['price_per_unit'])}/{unit_label}")
+    if data.get("quality_grade"):
+        text += f", {QualityGrade(data['quality_grade']).label}"
     if data.get("available_from"):
         text += f", available from {_fmt_date(data['available_from'])}"
     if data.get("available_until"):
