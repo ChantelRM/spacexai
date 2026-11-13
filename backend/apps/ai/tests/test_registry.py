@@ -25,11 +25,14 @@ ALL_TOOLS = {
     "create_or_update_listing", "find_bulk_purchases", "calculate_cost_shares",
     "find_transport_requests", "find_farmer_groups", "find_equipment",
     "compare_listings", "create_order", "get_my_orders", "respond_to_order",
+    "join_bulk_purchase", "confirm_bulk_purchase_contribution", "join_transport_request",
+    "request_equipment_booking",
 }
 BUYER_TOOLS = {"find_nearby_farmers", "search_recommended_farmers", "compare_listings", "create_order",
                "get_my_orders"}
 FARMER_TOOLS = ALL_TOOLS - {"search_recommended_farmers", "compare_listings", "create_order"}
-CONFIRMATION_TOOLS = {"create_or_update_listing", "create_order", "respond_to_order"}
+CONFIRMATION_TOOLS = {"create_or_update_listing", "create_order", "respond_to_order", "join_bulk_purchase",
+                      "confirm_bulk_purchase_contribution", "join_transport_request", "request_equipment_booking"}
 
 
 def test_all_tools_registered_with_valid_schemas():
@@ -59,9 +62,15 @@ def test_inactive_or_anonymous_users_get_no_tools(farmer):
     assert tools_for_user(farmer) == []
 
 
-def test_no_tool_can_confirm_actions():
-    for name in registry.REGISTRY:
-        assert "confirm" not in name and "cancel" not in name
+def test_no_tool_can_confirm_pending_actions():
+    """Commitment tools are themselves gated; nothing in the registry can confirm or cancel a PendingAction."""
+    import inspect
+
+    for name, spec in registry.REGISTRY.items():
+        if "confirm" in name or "join" in name or "order" in name and name != "get_my_orders":
+            assert spec.requires_confirmation, name
+        source = inspect.getsource(spec.func)
+        assert "PendingAction" not in source and "confirm_pending_action" not in source
 
 
 def test_denied_call_is_logged(buyer):
@@ -148,6 +157,11 @@ def test_find_nearby_farmers_excludes_buyers_and_handles_missing_location(farmer
     assert result["results"] == [] and "location" in result["message"]
 
 
+def test_every_tool_has_a_real_service():
+    for spec in registry.REGISTRY.values():
+        assert resolve_service(spec.service) is not None, spec.name
+
+
 @pytest.mark.parametrize("name,args", [
     ("find_bulk_purchases", {"item": "fertiliser"}),
     ("calculate_cost_shares", {"total_cost": 1200, "split_method": "equal",
@@ -156,9 +170,15 @@ def test_find_nearby_farmers_excludes_buyers_and_handles_missing_location(farmer
     ("find_farmer_groups", {"focus": "security"}),
     ("find_equipment", {"equipment_type": "tractor"}),
 ])
-def test_stub_tools_report_not_available(farmer, name, args):
+def test_coop_search_tools_run(farmer, name, args):
     outcome = execute_tool_call(farmer, name, json.dumps(args))
-    assert outcome.status == "success"
+    assert outcome.status == "success", outcome.result
+    assert outcome.result["available"] is True
+
+
+def test_missing_service_reports_not_available(farmer, settings):
+    settings.AI_SERVICE_PROVIDERS = {"find_equipment": "apps.not_built.services.find_equipment"}
+    outcome = execute_tool_call(farmer, "find_equipment", "{}")
     assert outcome.result == NOT_AVAILABLE
     assert AIActionLog.objects.get().result_summary == "Feature not available yet"
 
@@ -225,6 +245,7 @@ def test_register_tool_validation(restore_registry):
 
 def test_resolve_service(settings):
     assert resolve_service("find_nearby_farmers") is not None
+    settings.AI_SERVICE_PROVIDERS = {"find_equipment": "apps.not_built.services.find_equipment"}
     assert resolve_service("find_equipment") is None  # module not written yet
     settings.AI_SERVICE_PROVIDERS = {"find_equipment": "apps.ai.tests.broken_service_module.find_equipment"}
     with pytest.raises(ModuleNotFoundError):  # a real bug inside an existing module must surface

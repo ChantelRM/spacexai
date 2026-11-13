@@ -48,6 +48,8 @@ def _fmt_date(value) -> str:
 # --- Inputs ------------------------------------------------------------------------------
 
 class FindNearbyFarmersInput(serializers.Serializer):
+    produce = serializers.CharField(required=False, max_length=80,
+                                    help_text="Only farmers who list or grow this produce.")
     max_distance_km = max_distance_field()
     limit = limit_field()
 
@@ -114,6 +116,8 @@ def summarize_listing(data) -> str:
 class FindBulkPurchasesInput(serializers.Serializer):
     item = serializers.CharField(required=False, max_length=80,
                                  help_text="What to buy in bulk, e.g. 'fertiliser', 'seed potatoes'.")
+    category = serializers.ChoiceField(choices=["FERTILISER", "SEED", "PESTICIDE", "FEED", "IRRIGATION", "TOOLS",
+                                                "OTHER"], required=False)
     max_distance_km = max_distance_field()
     limit = limit_field()
 
@@ -125,12 +129,18 @@ class CostParticipantInput(serializers.Serializer):
 
 
 class CalculateCostSharesInput(serializers.Serializer):
-    total_cost = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"),
-                                          help_text="Total cost in rand (ZAR).")
-    split_method = serializers.ChoiceField(choices=["equal", "by_quantity"])
-    participants = CostParticipantInput(many=True, min_length=2, max_length=50)
+    bulk_purchase_id = serializers.IntegerField(required=False, min_value=1,
+                                                help_text="Show the live breakdown of an existing bulk purchase.")
+    total_cost = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"), required=False,
+                                          help_text="Total cost in rand (ZAR), for an ad hoc split.")
+    split_method = serializers.ChoiceField(choices=["equal", "by_quantity"], default="by_quantity")
+    participants = CostParticipantInput(many=True, min_length=2, max_length=50, required=False)
 
     def validate(self, attrs):
+        if attrs.get("bulk_purchase_id"):
+            return attrs
+        if attrs.get("total_cost") is None or not attrs.get("participants"):
+            raise serializers.ValidationError("Give bulk_purchase_id, or total_cost with participants.")
         if attrs["split_method"] == "by_quantity":
             if any(p.get("quantity") is None for p in attrs["participants"]):
                 raise serializers.ValidationError({"participants": ["Every participant needs a quantity."]})
@@ -174,7 +184,7 @@ class FindEquipmentInput(serializers.Serializer):
     description=(
         "Find registered farmers nearest to the current user, nearest first. Returns display "
         "names, town/municipality/province and an approximate straight-line distance. "
-        "Does not say what they grow."
+        "Optionally filter to farmers who list or grow a produce."
     ),
     input_serializer=FindNearbyFarmersInput,
     allowed_roles={FARMER, BUYER},
@@ -413,3 +423,183 @@ def summarize_response(data) -> str:
 )
 def respond_to_order(user, data):
     return call_service("respond_to_order", user, data)
+
+
+# --- Part 4: cooperative commitments (all require the user's confirmation) ----------------
+
+class JoinBulkPurchaseInput(serializers.Serializer):
+    bulk_purchase_id = serializers.IntegerField(min_value=1)
+    quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"),
+                                        help_text="How many units (e.g. bags) the farmer wants.")
+
+    def validate(self, attrs):
+        from apps.bulk.models import BulkStatus
+        from apps.bulk.services import get_purchase
+
+        bp = get_purchase(self.context["user"], attrs["bulk_purchase_id"])
+        if bp.status != BulkStatus.OPEN:
+            raise serializers.ValidationError({"bulk_purchase_id": ["This bulk purchase is no longer open."]})
+        return attrs
+
+
+def summarize_join_bulk(data, user) -> str:
+    from apps.bulk.calculations import calculate_cost_shares
+    from apps.bulk.models import BulkPurchase
+
+    bp = BulkPurchase.objects.get(pk=data["bulk_purchase_id"])
+    lines = [{"label": m.farmer_id, "quantity": m.quantity} for m in bp.members.exclude(farmer_id=user.pk)]
+    lines.append({"label": "you", "quantity": data["quantity"]})
+    calc = calculate_cost_shares(lines, bp.unit_price, bp.discount_tiers, bp.shared_fees)
+    mine = calc["shares"][-1]["share_amount"]
+    return (f"Join the bulk purchase '{bp.item_name}' with {data['quantity'].normalize():f} "
+            f"{bp.unit}. Estimated contribution {_fmt_money(mine)} at {_fmt_money(calc['unit_price'])}/{bp.unit} "
+            f"for {calc['total_quantity'].normalize():f} {bp.unit} in total. Joining does not commit you to pay: "
+            "you confirm your contribution separately.")
+
+
+@register_tool(
+    name="join_bulk_purchase",
+    description=("For a farmer: prepare joining an open bulk purchase (or changing their quantity). Nothing "
+                 "happens until the farmer confirms in the app."),
+    input_serializer=JoinBulkPurchaseInput,
+    allowed_roles={FARMER},
+    requires_confirmation=True,
+    summarize=summarize_join_bulk,
+    service="join_bulk_purchase",
+)
+def join_bulk_purchase(user, data):
+    return call_service("join_bulk_purchase", user, data)
+
+
+class ConfirmBulkContributionInput(serializers.Serializer):
+    bulk_purchase_id = serializers.IntegerField(min_value=1)
+
+    def validate(self, attrs):
+        from apps.bulk.models import BulkPurchaseMember
+
+        if not BulkPurchaseMember.objects.filter(bulk_purchase_id=attrs["bulk_purchase_id"],
+                                                 farmer=self.context["user"]).exists():
+            raise serializers.ValidationError({"bulk_purchase_id": ["The farmer hasn't joined this bulk purchase."]})
+        return attrs
+
+
+def summarize_confirm_bulk(data, user) -> str:
+    from apps.bulk.models import BulkPurchaseMember
+
+    m = BulkPurchaseMember.objects.select_related("bulk_purchase").get(
+        bulk_purchase_id=data["bulk_purchase_id"], farmer_id=user.pk)
+    bp = m.bulk_purchase
+    return (f"Confirm your contribution of {_fmt_money(m.calculated_contribution)} for "
+            f"{m.quantity.normalize():f} {bp.unit} of {bp.item_name}. This is a commitment to pay the organiser, "
+            "outside the app.")
+
+
+@register_tool(
+    name="confirm_bulk_purchase_contribution",
+    description=("For a farmer: prepare confirming their calculated contribution to a bulk purchase they "
+                 "joined. This is a commitment to pay, so the farmer must confirm it in the app."),
+    input_serializer=ConfirmBulkContributionInput,
+    allowed_roles={FARMER},
+    requires_confirmation=True,
+    summarize=summarize_confirm_bulk,
+    service="confirm_bulk_purchase_contribution",
+)
+def confirm_bulk_purchase_contribution(user, data):
+    return call_service("confirm_bulk_purchase_contribution", user, data)
+
+
+class JoinTransportInput(serializers.Serializer):
+    transport_request_id = serializers.IntegerField(min_value=1)
+    load_weight_kg = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False)
+    load_volume_m3 = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False)
+    load_space_units = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0"),
+                                                required=False)
+    pickup_town = serializers.CharField(max_length=120, required=False, allow_blank=True, default="")
+    agreed_amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False)
+
+    def validate(self, attrs):
+        from apps.transport.models import TransportStatus
+        from apps.transport.services import _check_load, get_request
+
+        tr = get_request(attrs["transport_request_id"])
+        if tr.status != TransportStatus.OPEN:
+            raise serializers.ValidationError({"transport_request_id": ["This trip is not open."]})
+        _check_load(tr, attrs)
+        return attrs
+
+
+def summarize_join_transport(data) -> str:
+    from apps.transport.services import get_request
+
+    tr = get_request(data["transport_request_id"])
+    load = ", ".join(f"{data[k].normalize():f} {label}" for k, label in
+                     (("load_weight_kg", "kg"), ("load_volume_m3", "m³"), ("load_space_units", "spaces"))
+                     if data.get(k) is not None) or "your load"
+    cost = (f"The trip costs {_fmt_money(tr.total_cost)} in total, split {tr.get_cost_split_method_display().lower()}"
+            if tr.total_cost is not None else "The cost has not been quoted yet")
+    return (f"Join the shared trip to {tr.destination} on {_fmt_date(tr.travel_date)} with {load}. {cost}; "
+            "you confirm your share separately.")
+
+
+@register_tool(
+    name="join_transport_request",
+    description=("For a farmer: prepare joining a shared transport trip with their load. Nothing happens until "
+                 "the farmer confirms in the app."),
+    input_serializer=JoinTransportInput,
+    allowed_roles={FARMER},
+    requires_confirmation=True,
+    summarize=summarize_join_transport,
+    service="join_transport_request",
+)
+def join_transport_request(user, data):
+    return call_service("join_transport_request", user, data)
+
+
+class EquipmentBookingInput(serializers.Serializer):
+    equipment_id = serializers.IntegerField(min_value=1)
+    start_date = serializers.DateField()
+    end_date = serializers.DateField()
+    quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"), required=False,
+                                        help_text="Tonnes, for storage only.")
+    notes = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+    def validate(self, attrs):
+        from apps.ai.coop_services import _aware
+        from apps.equipment.models import EquipmentListing
+        from apps.equipment.services import check_availability
+
+        if attrs["end_date"] < attrs["start_date"]:
+            raise serializers.ValidationError({"end_date": ["Must be on or after start_date."]})
+        item = EquipmentListing.objects.filter(pk=attrs["equipment_id"], is_available=True).first()
+        if item is None or item.owner_id == self.context["user"].pk:
+            raise serializers.ValidationError({"equipment_id": ["Equipment not found or not bookable."]})
+        check_availability(item, _aware(attrs["start_date"]), _aware(attrs["end_date"], end=True),
+                           attrs.get("quantity"))
+        return attrs
+
+
+def summarize_booking(data) -> str:
+    from apps.ai.coop_services import _aware
+    from apps.equipment.models import EquipmentListing
+    from apps.equipment.services import estimate_cost
+
+    item = EquipmentListing.objects.select_related("owner").get(pk=data["equipment_id"])
+    cost = estimate_cost(item, _aware(data["start_date"]), _aware(data["end_date"], end=True), data.get("quantity"))
+    qty = f" for {data['quantity'].normalize():f} tonnes" if data.get("quantity") else ""
+    return (f"Request to book {item.name} from {item.owner.display_name}{qty}, {_fmt_date(data['start_date'])} to "
+            f"{_fmt_date(data['end_date'])}. Estimated cost {_fmt_money(cost)}. The owner must approve it; payment "
+            "is arranged outside the app.")
+
+
+@register_tool(
+    name="request_equipment_booking",
+    description=("For a farmer: prepare a booking request for shared equipment or storage. Nothing is sent until "
+                 "the farmer confirms in the app; then the owner must approve."),
+    input_serializer=EquipmentBookingInput,
+    allowed_roles={FARMER},
+    requires_confirmation=True,
+    summarize=summarize_booking,
+    service="request_equipment_booking",
+)
+def request_equipment_booking(user, data):
+    return call_service("request_equipment_booking", user, data)

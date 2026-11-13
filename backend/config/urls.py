@@ -19,6 +19,11 @@ api_v1 = [
     path("messaging/", include("apps.messaging.urls")),
     path("marketplace/", include("apps.marketplace.urls")),
     path("notifications/", include("apps.core.urls")),
+    path("groups/", include("apps.groups.urls")),
+    path("bulk-purchases/", include("apps.bulk.urls")),
+    path("transport/", include("apps.transport.urls")),
+    path("services/", include("apps.services.urls")),
+    path("equipment/", include("apps.equipment.urls")),
 ]
 
 urlpatterns = [

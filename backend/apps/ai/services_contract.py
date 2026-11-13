@@ -42,11 +42,15 @@ SERVICE_PROVIDERS: dict[str, str] = {
     "get_my_orders": "apps.orders.ai_services.get_my_orders",
     "respond_to_order": "apps.orders.ai_services.respond_to_order",
     # Member 4 (cooperation: groups, bulk buying, transport, equipment)
-    "find_bulk_purchases": "apps.cooperation.ai_services.find_bulk_purchases",
-    "calculate_cost_shares": "apps.cooperation.ai_services.calculate_cost_shares",
-    "find_transport_requests": "apps.cooperation.ai_services.find_transport_requests",
-    "find_farmer_groups": "apps.cooperation.ai_services.find_farmer_groups",
-    "find_equipment": "apps.cooperation.ai_services.find_equipment",
+    "find_bulk_purchases": "apps.bulk.services.find_bulk_purchases",
+    "calculate_cost_shares": "apps.bulk.services.calculate_cost_shares_for_ai",
+    "find_transport_requests": "apps.transport.services.find_transport_requests",
+    "find_farmer_groups": "apps.groups.services.find_farmer_groups",
+    "find_equipment": "apps.equipment.services.find_equipment",
+    "join_bulk_purchase": "apps.ai.coop_services.join_bulk_purchase",
+    "confirm_bulk_purchase_contribution": "apps.ai.coop_services.confirm_bulk_purchase_contribution",
+    "join_transport_request": "apps.ai.coop_services.join_transport_request",
+    "request_equipment_booking": "apps.ai.coop_services.request_equipment_booking",
 }
 
 

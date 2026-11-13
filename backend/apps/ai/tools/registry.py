@@ -245,7 +245,13 @@ def execute_tool_call(user, name: str, raw_arguments, conversation=None) -> Tool
         return ToolOutcome(name, S.INVALID, {"error": "invalid_arguments", "details": {"non_field_errors": [parse_error]}})
 
     serializer = spec.input_serializer(data=args, context={"user": user})
-    if not serializer.is_valid():
+    try:
+        valid = serializer.is_valid()
+    except drf_exceptions.APIException as exc:  # e.g. NotFound raised by a lookup inside validate()
+        if exc.status_code >= 500:
+            return _server_error(spec, user, conversation, args)
+        return _client_error(spec, user, conversation, args, exc)
+    if not valid:
         errors = _json_safe(serializer.errors)
         _log(user, conversation, name, args, S.INVALID, json.dumps(errors)[:1000], spec.requires_confirmation)
         return ToolOutcome(name, S.INVALID, {"error": "invalid_arguments", "details": errors})
@@ -260,7 +266,7 @@ def execute_tool_call(user, name: str, raw_arguments, conversation=None) -> Tool
             conversation=conversation,
             tool_name=name,
             arguments=_json_safe(serializer.data),
-            summary=spec.summarize(data),
+            summary=_summarize(spec, data, user),
         )
         _log(user, conversation, name, args, S.PENDING_CONFIRMATION, pending.summary, True)
         return ToolOutcome(
@@ -279,6 +285,15 @@ def execute_tool_call(user, name: str, raw_arguments, conversation=None) -> Tool
         )
 
     return _run(spec, user, data, args, conversation, success_status=S.SUCCESS)
+
+
+def _summarize(spec, data, user) -> str:
+    """Summaries take (data) or (data, user)."""
+    import inspect
+
+    if len(inspect.signature(spec.summarize).parameters) >= 2:
+        return spec.summarize(data, user)
+    return spec.summarize(data)
 
 
 def _run(spec, user, data, log_args, conversation, success_status) -> ToolOutcome:

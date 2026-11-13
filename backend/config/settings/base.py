@@ -54,6 +54,12 @@ INSTALLED_APPS = [
     "apps.orders",
     "apps.messaging",
     "apps.marketplace",
+    # Member 4
+    "apps.groups",
+    "apps.bulk",
+    "apps.transport",
+    "apps.services",
+    "apps.equipment",
 ]
 
 MIDDLEWARE = [
@@ -174,6 +180,10 @@ SPECTACULAR_SETTINGS = {
         "RequirementStatusEnum": "apps.buyers.models.RequirementStatus",
         "BusinessTypeEnum": "apps.buyers.models.BusinessType",
         "RecurrenceEnum": "apps.buyers.models.Recurrence",
+        "BulkCategoryEnum": "apps.bulk.models.BulkCategory",
+        "InsuranceCategoryEnum": "apps.services.models.InsuranceCategory",
+        "TransportSplitMethodEnum": "apps.transport.models.SplitMethod",
+        "ServiceSplitEnum": "apps.services.models.ServiceSplit",
     },
 }
 
