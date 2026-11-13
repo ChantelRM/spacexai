@@ -57,13 +57,20 @@ class SearchRecommendedFarmersInput(serializers.Serializer):
     quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"),
                                         help_text="How much the buyer needs.")
     unit = serializers.ChoiceField(choices=UNIT_CHOICES)
+    max_price = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False,
+                                         help_text="Maximum price in rand per unit, if the buyer gave one.")
+    min_quality = serializers.ChoiceField(choices=QualityGrade.values, required=False)
     max_distance_km = max_distance_field()
     needed_by = serializers.DateField(required=False, help_text="Date the produce is needed by.")
+    requirement_id = serializers.IntegerField(required=False, min_value=1,
+                                              help_text="Use the criteria of one of the buyer's saved requirements.")
     limit = limit_field()
 
 
 class SearchBuyerRequirementsInput(serializers.Serializer):
     produce = produce_field(required=False)
+    listing_id = serializers.IntegerField(required=False, min_value=1,
+                                          help_text="Match buyers for one of the farmer's own listings.")
     max_distance_km = max_distance_field()
     limit = limit_field()
 
@@ -276,3 +283,133 @@ def find_farmer_groups(user, data):
 )
 def find_equipment(user, data):
     return call_service("find_equipment", user, data)
+
+
+# --- Part 3: marketplace and orders ----------------------------------------------------------
+
+class CompareListingsInput(serializers.Serializer):
+    listing_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), min_length=2, max_length=5,
+                                        help_text="IDs of 2-5 listings from earlier results.")
+
+
+@register_tool(
+    name="compare_listings",
+    description=("For a buyer: compare 2-5 listings side by side (price, quantity, quality, approximate distance, "
+                 "availability and the farmer's order completion record)."),
+    input_serializer=CompareListingsInput,
+    allowed_roles={BUYER},
+    service="compare_listings",
+)
+def compare_listings(user, data):
+    return call_service("compare_listings", user, data)
+
+
+class OrderLineInput(serializers.Serializer):
+    listing_id = serializers.IntegerField(min_value=1)
+    quantity = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"),
+                                        help_text="Quantity in the listing's own unit.")
+
+
+class CreateOrderInput(serializers.Serializer):
+    items = OrderLineInput(many=True, min_length=1, max_length=20)
+    delivery_date = serializers.DateField(required=False)
+    delivery_notes = serializers.CharField(required=False, allow_blank=True, max_length=1000, default="")
+    buyer_requirement_id = serializers.IntegerField(required=False, min_value=1)
+
+    def validate(self, attrs):
+        from apps.orders.services import validate_order_lines
+
+        validate_order_lines(self.context["user"], [dict(i) for i in attrs["items"]])
+        return attrs
+
+
+def summarize_order(data) -> str:
+    from apps.listings.models import ProduceListing
+    from apps.orders.services import lines_total
+
+    listings = {lst.pk: lst for lst in ProduceListing.objects.select_related("farmer")
+                .filter(pk__in=[i["listing_id"] for i in data["items"]])}
+    lines = [(listings[i["listing_id"]], Decimal(i["quantity"])) for i in data["items"]]
+    parts = [f"{format_quantity(q, lst.unit)} {lst.produce_name} at {_fmt_money(lst.price_per_unit)}/"
+             f"{Unit(lst.unit).label} = {_fmt_money((lst.price_per_unit * q).quantize(Decimal('0.01')))}"
+             for lst, q in lines]
+    text = (f"Place an order with {lines[0][0].farmer.display_name}: " + "; ".join(parts)
+            + f". Total {_fmt_money(lines_total(lines))}")
+    if data.get("delivery_date"):
+        text += f", delivery by {_fmt_date(data['delivery_date'])}"
+    return text + ". The farmer must accept it; payment is arranged outside the app."
+
+
+@register_tool(
+    name="create_order",
+    description=("For a buyer: prepare an order for listings from ONE farmer. This NEVER places the order "
+                 "directly: the buyer must confirm it in the app, then the farmer must accept it."),
+    input_serializer=CreateOrderInput,
+    allowed_roles={BUYER},
+    requires_confirmation=True,
+    summarize=summarize_order,
+    service="create_order",
+)
+def create_order(user, data):
+    return call_service("create_order", user, data)
+
+
+class GetMyOrdersInput(serializers.Serializer):
+    status = serializers.ChoiceField(choices=["PENDING", "ACCEPTED", "REJECTED", "DISPATCHED", "DELIVERED",
+                                              "COMPLETED", "CANCELLED"], required=False)
+    limit = limit_field()
+
+
+@register_tool(
+    name="get_my_orders",
+    description="List the user's own orders (orders placed for buyers, incoming orders for farmers), newest first.",
+    input_serializer=GetMyOrdersInput,
+    allowed_roles={FARMER, BUYER},
+    service="get_my_orders",
+)
+def get_my_orders(user, data):
+    return call_service("get_my_orders", user, data)
+
+
+class RespondToOrderInput(serializers.Serializer):
+    order_id = serializers.IntegerField(min_value=1)
+    decision = serializers.ChoiceField(choices=["accept", "reject"])
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=500, default="",
+                                   help_text="Required when rejecting.")
+
+    def validate(self, attrs):
+        from apps.orders.models import Order, OrderStatus
+
+        order = Order.objects.filter(pk=attrs["order_id"], farmer=self.context["user"]).first()
+        if order is None:
+            raise serializers.ValidationError({"order_id": ["Order not found."]})
+        if order.status != OrderStatus.PENDING:
+            raise serializers.ValidationError({"order_id": ["Only pending orders can be accepted or rejected."]})
+        if attrs["decision"] == "reject" and not attrs.get("reason", "").strip():
+            raise serializers.ValidationError({"reason": ["Give a reason when rejecting."]})
+        return attrs
+
+
+def summarize_response(data) -> str:
+    from apps.orders.models import Order
+
+    order = Order.objects.select_related("buyer").prefetch_related("items").get(pk=data["order_id"])
+    items = "; ".join(f"{format_quantity(i.quantity, i.unit)} {i.produce_name}" for i in order.items.all())
+    if data["decision"] == "accept":
+        return (f"Accept order #{order.pk} from {order.buyer.display_name}: {items} "
+                f"({_fmt_money(order.total_amount)} total). The stock will be reserved.")
+    return f"Reject order #{order.pk} from {order.buyer.display_name}: {items}. Reason: {data['reason']}"
+
+
+@register_tool(
+    name="respond_to_order",
+    description=("For a farmer: prepare accepting or rejecting one of their PENDING incoming orders. Nothing "
+                 "happens until the farmer confirms in the app."),
+    input_serializer=RespondToOrderInput,
+    allowed_roles={FARMER},
+    requires_confirmation=True,
+    summarize=summarize_response,
+    service="respond_to_order",
+)
+def respond_to_order(user, data):
+    return call_service("respond_to_order", user, data)

@@ -13,6 +13,12 @@ api_v1 = [
     path("ai/", include("apps.ai.urls")),
     path("farmers/", include("apps.farmers.urls")),
     path("listings/", include("apps.listings.urls")),
+    path("buyers/", include("apps.buyers.urls")),
+    path("recommendations/", include("apps.recommendations.urls")),
+    path("orders/", include("apps.orders.urls")),
+    path("messaging/", include("apps.messaging.urls")),
+    path("marketplace/", include("apps.marketplace.urls")),
+    path("notifications/", include("apps.core.urls")),
 ]
 
 urlpatterns = [

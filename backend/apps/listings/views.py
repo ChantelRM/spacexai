@@ -39,6 +39,7 @@ class MyListingViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, mixins.Re
 
     permission_classes = [IsFarmer]
     serializer_class = MyListingSerializer
+    queryset = ProduceListing.objects.none()  # schema only; scoped in get_queryset
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 

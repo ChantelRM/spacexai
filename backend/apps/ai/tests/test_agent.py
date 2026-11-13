@@ -50,7 +50,8 @@ def test_tool_call_round_trip(farmer_client, farmer, farmer_network, fake_grok):
 def test_only_role_tools_are_sent(buyer_client, farmer_client, fake_grok):
     grok = fake_grok(text_turn("Hi"))
     buyer_client.post(CHAT, {"message": "hello"}, format="json")
-    assert grok.tool_names() == ["find_nearby_farmers", "search_recommended_farmers"]
+    assert grok.tool_names() == ["compare_listings", "create_order", "find_nearby_farmers", "get_my_orders",
+                                 "search_recommended_farmers"]
 
     grok = fake_grok(text_turn("Hi"))
     farmer_client.post(CHAT, {"message": "hello"}, format="json")

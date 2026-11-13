@@ -24,9 +24,12 @@ ALL_TOOLS = {
     "find_nearby_farmers", "search_recommended_farmers", "search_buyer_requirements",
     "create_or_update_listing", "find_bulk_purchases", "calculate_cost_shares",
     "find_transport_requests", "find_farmer_groups", "find_equipment",
+    "compare_listings", "create_order", "get_my_orders", "respond_to_order",
 }
-BUYER_TOOLS = {"find_nearby_farmers", "search_recommended_farmers"}
-FARMER_TOOLS = ALL_TOOLS - {"search_recommended_farmers"}
+BUYER_TOOLS = {"find_nearby_farmers", "search_recommended_farmers", "compare_listings", "create_order",
+               "get_my_orders"}
+FARMER_TOOLS = ALL_TOOLS - {"search_recommended_farmers", "compare_listings", "create_order"}
+CONFIRMATION_TOOLS = {"create_or_update_listing", "create_order", "respond_to_order"}
 
 
 def test_all_tools_registered_with_valid_schemas():
@@ -39,7 +42,7 @@ def test_all_tools_registered_with_valid_schemas():
         json.dumps(tool)  # serialisable
         assert spec.service in SERVICE_PROVIDERS
     assert registry.REGISTRY["create_or_update_listing"].requires_confirmation
-    assert [n for n, s in registry.REGISTRY.items() if s.requires_confirmation] == ["create_or_update_listing"]
+    assert {n for n, s in registry.REGISTRY.items() if s.requires_confirmation} == CONFIRMATION_TOOLS
 
 
 def test_role_filtering(farmer, buyer):
@@ -146,7 +149,6 @@ def test_find_nearby_farmers_excludes_buyers_and_handles_missing_location(farmer
 
 
 @pytest.mark.parametrize("name,args", [
-    ("search_buyer_requirements", {"produce": "tomatoes"}),
     ("find_bulk_purchases", {"item": "fertiliser"}),
     ("calculate_cost_shares", {"total_cost": 1200, "split_method": "equal",
                                "participants": [{"label": "A"}, {"label": "B"}]}),
@@ -161,10 +163,12 @@ def test_stub_tools_report_not_available(farmer, name, args):
     assert AIActionLog.objects.get().result_summary == "Feature not available yet"
 
 
-def test_buyer_stub_reports_not_available(buyer):
+def test_recommendation_tools_are_real_services(buyer, farmer):
     outcome = execute_tool_call(buyer, "search_recommended_farmers",
                                 json.dumps({"produce": "potatoes", "quantity": 500, "unit": "KG"}))
-    assert outcome.result == NOT_AVAILABLE
+    assert outcome.result["available"] is True and outcome.result["results"] == []
+    outcome = execute_tool_call(farmer, "search_buyer_requirements", json.dumps({"produce": "tomatoes"}))
+    assert outcome.result["available"] is True and outcome.result["count"] == 0
 
 
 def test_cost_share_by_quantity_requires_quantities(farmer):

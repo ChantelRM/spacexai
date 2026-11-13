@@ -48,6 +48,12 @@ INSTALLED_APPS = [
     # Member 2
     "apps.farmers",
     "apps.listings",
+    # Member 3
+    "apps.buyers",
+    "apps.recommendations",
+    "apps.orders",
+    "apps.messaging",
+    "apps.marketplace",
 ]
 
 MIDDLEWARE = [
@@ -160,6 +166,14 @@ SPECTACULAR_SETTINGS = {
         "UserRoleEnum": "apps.accounts.models.Role",
         "AIMessageRoleEnum": "apps.ai.models.AIMessage.Role",
         "ProvinceEnum": "apps.locations.models.Province",
+        "UnitEnum": "apps.listings.units.Unit",
+        "QualityGradeEnum": "apps.listings.models.QualityGrade",
+        "ListingStatusEnum": "apps.listings.models.ListingStatus",
+        "OrderStatusEnum": "apps.orders.models.OrderStatus",
+        "PaymentStatusEnum": "apps.orders.models.PaymentStatus",
+        "RequirementStatusEnum": "apps.buyers.models.RequirementStatus",
+        "BusinessTypeEnum": "apps.buyers.models.BusinessType",
+        "RecurrenceEnum": "apps.buyers.models.Recurrence",
     },
 }
 
@@ -177,7 +191,10 @@ XAI_MAX_RETRIES = env("XAI_MAX_RETRIES")
 AI_MAX_MESSAGE_LENGTH = 2000
 AI_MAX_TOOL_ROUNDS = 5
 AI_PENDING_ACTION_TTL_MINUTES = 15
-AI_HISTORY_MESSAGES = 20  # previous messages sent to Grok for context
+AI_HISTORY_MESSAGES = 20
+
+# Recommendation score weights (sum to 100). See apps/recommendations/scoring.py.
+RECOMMENDATION_WEIGHTS = {"quantity": 30, "price": 20, "distance": 20, "timing": 10, "quality": 10, "reliability": 10}  # previous messages sent to Grok for context
 
 # --- Logging ----------------------------------------------------------------
 LOGGING = {
