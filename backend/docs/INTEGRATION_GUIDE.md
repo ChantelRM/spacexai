@@ -4,15 +4,18 @@ This guide explains how to build your part on top of the foundation. Read [API_C
 
 ## Who owns what
 
-| Member | Owns | Suggested app(s) | Must NOT create |
-|---|---|---|---|
-| 1 | Project setup, `accounts`, `core`, `locations`, `ai` | (done) | |
-| 2 | `FarmerProfile`, `ProduceListing` | `apps/listings` | User or location fields |
-| 3 | `WholesaleBuyerProfile`, `BuyerRequirement`, `Order`, `OrderItem`, `Conversation`, `Message` | `apps/buyers` (plus `apps/orders` and `apps/messaging` if you prefer) | |
-| 4 | `FarmerGroup`, `BulkPurchase`, `TransportRequest`, `EquipmentListing`, ... | `apps/cooperation` | |
-| 5 | React Native app | (frontend) | |
+All five areas are now built. Use this table to find your code:
 
-The suggested app names match the default AI service paths in `apps/ai/services_contract.py`. If you choose another name, update `SERVICE_PROVIDERS` there (or set `AI_SERVICE_PROVIDERS` in settings).
+| Member | Area | Apps |
+|---|---|---|
+| 1 | Foundation, auth, locations, AI agent | `core`, `accounts`, `locations`, `ai` |
+| 2 | Farmer profiles and produce listings | `farmers`, `listings` |
+| 3 | Buyers, requirements, recommendations, orders, messaging, marketplace | `buyers`, `recommendations`, `orders`, `messaging`, `marketplace` |
+| 4 | Cooperative features | `groups`, `bulk`, `transport`, `services` (security and insurance; app label `shared_services`), `equipment` |
+| 5 | Mobile app | `../mobile` (Expo + TypeScript) |
+
+Business rules live in each app's `services.py`. The API views, the AI tools and the tests all call those
+services. Keep views thin.
 
 ## Adding an app
 
@@ -56,62 +59,45 @@ class ProduceListing(TimeStampedModel):
 
 ## Implementing an AI service
 
-The AI assistant already has tools registered for your features. Until your service exists, each one tells users *"This feature is not implemented yet."* To make a tool work:
+Every AI tool already points at a real service (see the tool table in [AI_AGENT.md](AI_AGENT.md#tools)).
+To change or add one:
 
-1. Open `apps/ai/services_contract.py` and find your tool's `Protocol` (signature) and `TypedDict` (return shape), plus its path in `SERVICE_PROVIDERS`:
-
-| Tool | Path | Roles | Confirmation |
-|---|---|---|---|
-| `search_buyer_requirements` | `apps.listings.ai_services` | farmer | no |
-| `create_or_update_listing` | `apps.listings.ai_services` | farmer | **yes** |
-| `search_recommended_farmers` | `apps.buyers.ai_services` | buyer | no |
-| `find_bulk_purchases` | `apps.cooperation.ai_services` | farmer | no |
-| `calculate_cost_shares` | `apps.cooperation.ai_services` | farmer | no |
-| `find_transport_requests` | `apps.cooperation.ai_services` | farmer | no |
-| `find_farmer_groups` | `apps.cooperation.ai_services` | farmer | no |
-| `find_equipment` | `apps.cooperation.ai_services` | farmer | no |
-
+1. Open `apps/ai/services_contract.py` and find the tool's `Protocol` (signature) and `TypedDict` (return
+   shape), plus its path in `SERVICE_PROVIDERS`.
 2. Create the module with a function of exactly that name and signature. Arguments arrive **already validated** by the tool's input serializer (`apps/ai/tools/definitions.py`), as keyword arguments. Dates are `datetime.date` and money and quantities are `Decimal`.
 
 ```python
-# apps/buyers/ai_services.py
+# apps/<your_app>/services.py (pattern used by every real service)
+from rest_framework.exceptions import PermissionDenied
+
+from apps.accounts.models import Role
 from apps.locations.distance import proximity_rank, within_km
+from apps.locations.models import UserLocation
 from apps.locations.serializers import public_location
 
 
-def search_recommended_farmers(user, *, produce, quantity, unit, max_distance_km=None,
-                               needed_by=None, limit=10):
-    buyer_loc = getattr(user, "location", None)
-    listings = (ProduceListing.objects.select_related("farmer__location")
-                .filter(produce__icontains=produce, unit=unit, is_active=True))
-    matches = []
-    for listing in listings:
-        farmer_loc = getattr(listing.farmer, "location", None)
-        if not within_km(buyer_loc, farmer_loc, max_distance_km):
+def find_things(user, *, max_distance_km=None, limit=10, **_ignored) -> dict:
+    if user.role != Role.FARMER:
+        raise PermissionDenied("This feature is for farmers.")
+    me = UserLocation.objects.filter(user=user).first()
+    rows = []
+    for thing in Thing.objects.filter(status="OPEN").select_related("owner"):
+        loc = UserLocation.objects.filter(user=thing.owner).first()
+        if not within_km(me, loc, max_distance_km):
             continue
-        reasons = [f"Has {produce} listed"]
-        shortfall = None
-        if listing.quantity >= quantity:
-            reasons.append("Enough stock for your order")
-        else:
-            shortfall = f"Has {listing.quantity} {unit} of the {quantity} {unit} you need"
-        matches.append((proximity_rank(buyer_loc, farmer_loc), {
-            "farmer_id": listing.farmer_id,
-            "farmer_display_name": listing.farmer.display_name,
-            "listing_id": listing.id,
-            "produce": listing.produce,
-            "available_quantity": float(listing.quantity),
-            "unit": listing.unit,
-            "price_per_unit": float(listing.price_per_unit),
-            "available_from": listing.available_from.isoformat() if listing.available_from else None,
-            "location": public_location(farmer_loc, buyer_loc),
-            "match_reasons": reasons,
-            "shortfall": shortfall,
+        rows.append((proximity_rank(me, loc), {
+            "thing_id": thing.pk,
+            "owner_display_name": thing.owner.display_name,
+            "location": public_location(loc, me),  # never raw coordinates
+            "match_reasons": ["..."],
         }))
-    matches.sort(key=lambda m: m[0])
-    results = [m[1] for m in matches[:limit]]
+    rows.sort(key=lambda r: r[0])
+    results = [r for _, r in rows[:limit]]
     return {"available": True, "count": len(results), "results": results}
 ```
+
+Real, tested examples: `apps/recommendations/services.py` (scored matching with reasons and shortfalls),
+`apps/equipment/services.py` (`find_equipment`) and `apps/transport/services.py` (`find_transport_requests`).
 
 3. That's all. The registry finds the function automatically, and the tool stops returning "not available". There is no registration step, and you don't need to edit `apps/ai`.
 

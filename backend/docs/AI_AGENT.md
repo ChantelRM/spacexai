@@ -9,6 +9,36 @@
 5. **Everything is logged.** Each message is saved, and every tool call writes an `AIActionLog` row.
 6. **The xAI API key stays on the server.** It is never returned, logged or put in an error message.
 
+## Tools
+
+All 17 tools have a real backend service; none are stubs any more. "Confirm" means the tool only creates a
+`PendingAction`. Nothing happens until the user taps Confirm in the app.
+
+| Tool | Roles | Confirm | Service |
+|---|---|---|---|
+| `find_nearby_farmers` (optional `produce` filter) | farmer, buyer | no | `apps.locations.services` |
+| `search_recommended_farmers` | buyer | no | `apps.recommendations.services` |
+| `search_buyer_requirements` | farmer | no | `apps.recommendations.services` |
+| `compare_listings` | buyer | no | `apps.marketplace.services` |
+| `get_my_orders` | farmer, buyer | no | `apps.orders.ai_services` |
+| `create_or_update_listing` | farmer | **yes** | `apps.listings.services` |
+| `create_order` | buyer | **yes** | `apps.orders.ai_services` |
+| `respond_to_order` (accept/reject) | farmer | **yes** | `apps.orders.ai_services` |
+| `find_farmer_groups` | farmer | no | `apps.groups.services` |
+| `find_bulk_purchases` | farmer | no | `apps.bulk.services` |
+| `calculate_cost_shares` (calculation only) | farmer | no | `apps.bulk.services` |
+| `join_bulk_purchase` | farmer | **yes** | `apps.ai.coop_services` → `apps.bulk` |
+| `confirm_bulk_purchase_contribution` | farmer | **yes** | `apps.ai.coop_services` → `apps.bulk` |
+| `find_transport_requests` | farmer | no | `apps.transport.services` |
+| `join_transport_request` | farmer | **yes** | `apps.ai.coop_services` → `apps.transport` |
+| `find_equipment` | farmer | no | `apps.equipment.services` |
+| `request_equipment_booking` | farmer | **yes** | `apps.ai.coop_services` → `apps.equipment` |
+
+Confirmation summaries spell out exactly what will happen: amounts in rand, quantities, dates, the other
+party, and that payment is arranged outside the app. A tool's input serializer also checks that the target
+exists and is open (for example, that an order is PENDING and belongs to the farmer), so impossible actions
+are rejected before a `PendingAction` is ever created.
+
 ## Architecture
 
 ```
@@ -41,7 +71,7 @@ POST /api/v1/ai/chat/ ──► views.ChatView (throttle scope ai_chat, max 2000
 | `apps/ai/client.py` | Wrapper around the `openai` SDK at `XAI_BASE_URL`. One public function, `create_response()`, returns a provider-neutral `ModelTurn(text, tool_calls)`. Retries transient errors (timeouts, connection errors, 408/409/429/5xx) with exponential backoff, then raises `AIServiceUnavailable` (HTTP 503). |
 | `apps/ai/agent.py` | System prompt and agent loop. |
 | `apps/ai/tools/registry.py` | `register_tool`, role filtering, execution, logging and the confirm/cancel logic. |
-| `apps/ai/tools/definitions.py` | The nine tools and their input serializers. |
+| `apps/ai/tools/definitions.py` | Every tool and its input serializer. |
 | `apps/ai/tools/schema.py` | Builds JSON Schema from DRF serializers. |
 | `apps/ai/tools/privacy.py` | Strips `email`, `phone_number`, `latitude`, `longitude`, `address_line` and similar keys from every result as a safety net. |
 | `apps/ai/services_contract.py` | Service signatures, return shapes and provider paths for Members 2-4. |
