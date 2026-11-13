@@ -73,32 +73,41 @@ All Grok calls are mocked. A global fixture also blocks the real SDK client, so 
 backend/
   config/            settings (base/dev/test), urls, wsgi, asgi
   apps/
-    core/            shared permissions, pagination, error format, base model, health check
-    accounts/        custom User (email login, roles), JWT auth endpoints, seed_dev_data
-    locations/       UserLocation, distance utilities, find_nearby_farmers service
-    ai/              Grok client, agent loop, tool registry, confirmations, logs
-  docs/
-    API_CONVENTIONS.md   rules every app must follow
-    AI_AGENT.md          how the agent works and how to add a tool
-    INTEGRATION_GUIDE.md how Members 2-4 add apps and implement AI services
+    core/            permissions, pagination, error format, notifications, cost allocation, health
+    accounts/        custom User (email login, roles), JWT auth, seed_dev_data
+    locations/       UserLocation, distance utilities, find_nearby_farmers
+    ai/              Grok client, agent loop, tool registry, confirmations, audit log
+    farmers/         farm profiles, public farmer profile
+    listings/        produce listings, categories, images, units
+    buyers/          buyer profiles, requirements
+    recommendations/ scoring engine (both directions), recommendation log
+    orders/          order state machine, stock reservation, history
+    messaging/       buyer-farmer conversations
+    marketplace/     search, compare, farmer discovery
+    groups/ bulk/ transport/ services/ equipment/   cooperative features (farmers only)
+  docs/              API_CONVENTIONS, AI_AGENT, INTEGRATION_GUIDE, DECISIONS, DEMO_SCRIPT
 ```
 
-## Endpoints (v1)
+## Endpoints
 
-| Method | Path | Notes |
-|---|---|---|
-| GET | `/api/v1/health/` | Public |
-| POST | `/api/v1/auth/register/` | Public. Returns `user`, `tokens`, `role` |
-| POST | `/api/v1/auth/login/` | Public. Email + password. Returns `user`, `tokens`, `role` |
-| POST | `/api/v1/auth/refresh/` | Public. Rotates the refresh token |
-| POST | `/api/v1/auth/logout/` | Blacklists the refresh token |
-| GET, PATCH | `/api/v1/auth/me/` | `role` and `email` cannot change |
-| POST | `/api/v1/auth/change-password/` | Revokes old refresh tokens, returns a new pair |
-| GET, PUT, PATCH | `/api/v1/locations/me/` | Own location, including coordinates |
-| POST | `/api/v1/ai/chat/` | Talk to the assistant (throttled) |
-| GET | `/api/v1/ai/conversations/` | Own conversations |
-| GET | `/api/v1/ai/conversations/{id}/messages/` | Own messages |
-| POST | `/api/v1/ai/actions/{id}/confirm/` | Run a proposed action (owner only, once) |
-| POST | `/api/v1/ai/actions/{id}/cancel/` | Discard a proposed action |
+Everything is under `/api/v1/`, and the full, always-current list is in Swagger at `/api/docs/`. Main
+groups:
 
-See [docs/API_CONVENTIONS.md](docs/API_CONVENTIONS.md) for the error format, pagination and naming rules.
+| Prefix | What |
+|---|---|
+| `auth/` | register, login, refresh, logout, me, change-password |
+| `locations/me/` | your location (only you see your coordinates) |
+| `farmers/` | `me/profile/`, `me/recommended-buyers/`, public `{id}/` |
+| `listings/` | `categories/`, `mine/` CRUD + `pause/`, `resume/`, `images/` |
+| `buyers/` | `me/profile/`, `requirements/`, `me/recommended-farmers/`, public `{id}/` |
+| `recommendations/farmers/` | ad hoc ranked farmers (multi-item) |
+| `marketplace/` | `listings/` search, `compare/`, `farmers/` discovery |
+| `orders/` | list/create, `accept`, `reject`, `dispatch`, `confirm-receipt`, `complete`, `cancel`, `payment-status` |
+| `messaging/conversations/` | threads and messages |
+| `notifications/` | list, unread count, read, read-all |
+| `ai/` | `chat/`, `conversations/`, `actions/{id}/confirm/` and `cancel/` |
+| `groups/`, `bulk-purchases/`, `transport/`, `services/`, `equipment/` | cooperative features (farmers only) |
+
+See [docs/API_CONVENTIONS.md](docs/API_CONVENTIONS.md) for the error format, pagination and naming rules,
+and [docs/DECISIONS.md](docs/DECISIONS.md) for product defaults (no in-app payments, farmer must accept
+orders, and so on).
