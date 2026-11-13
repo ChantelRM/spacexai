@@ -15,6 +15,16 @@ def _clear_cache():
     cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _block_real_grok(monkeypatch):
+    """Safety net: no test may build a real xAI client. Tests patch create_response instead."""
+
+    def _blocked(*args, **kwargs):
+        raise RuntimeError("Real xAI API calls are blocked in tests. Patch apps.ai.client.create_response.")
+
+    monkeypatch.setattr("apps.ai.client._get_sdk_client", _blocked)
+
+
 @pytest.fixture
 def api_client():
     return APIClient()

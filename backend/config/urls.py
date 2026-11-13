@@ -8,6 +8,7 @@ api_v1 = [
     path("health/", HealthCheckView.as_view(), name="health"),
     path("auth/", include("apps.accounts.urls")),
     path("locations/", include("apps.locations.urls")),
+    path("ai/", include("apps.ai.urls")),
 ]
 
 urlpatterns = [

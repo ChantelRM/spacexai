@@ -149,6 +149,11 @@ SPECTACULAR_SETTINGS = {
     "SERVE_PERMISSIONS": ["rest_framework.permissions.AllowAny"],
     "COMPONENT_SPLIT_REQUEST": True,
     "SCHEMA_PATH_PREFIX": r"/api/v1",
+    "ENUM_NAME_OVERRIDES": {
+        "UserRoleEnum": "apps.accounts.models.Role",
+        "AIMessageRoleEnum": "apps.ai.models.AIMessage.Role",
+        "ProvinceEnum": "apps.locations.models.Province",
+    },
 }
 
 # --- CORS -------------------------------------------------------------------
